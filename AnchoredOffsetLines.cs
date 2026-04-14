@@ -75,6 +75,40 @@ namespace NinjaTrader.NinjaScript.Indicators
         {
             if (CurrentBar < 0) return;
 
+            // --- Identify whether a bar-close event occurred on this update. ---
+            bool processClosedBar = false;
+            DateTime closedBarTime = DateTime.MinValue;
+
+            if (State == State.Historical)
+            {
+                processClosedBar = true;
+                closedBarTime = Time[0];
+            }
+            else if (State == State.Realtime && IsFirstTickOfBar && CurrentBar >= 1)
+            {
+                processClosedBar = true;
+                closedBarTime = Time[1];
+            }
+
+            // --- Per-day reset runs on every closed bar. Phase transitions land here in Tasks 5 & 6. ---
+            if (processClosedBar)
+            {
+                DateTime etClose = TimeZoneInfo.ConvertTime(closedBarTime, easternTz);
+
+                if (etClose.Date != lastTradingDay)
+                {
+                    lastTradingDay = etClose.Date;
+                    phase = Phase.Tracking;
+                    anchorPrice = null;
+                    anchorBarIndex = -1;
+                    anchorDayKey = null;
+                    lastProcessedBarEt = DateTime.MinValue;
+                }
+
+                lastProcessedBarEt = etClose;
+            }
+
+            // --- Drawing (phase-specific logic added in later tasks). ---
             double refPrice = Close[0];
             double upper = refPrice + Offset;
             double lower = refPrice - Offset;
