@@ -75,6 +75,9 @@ namespace NinjaTrader.NinjaScript.Indicators
         {
             if (CurrentBar < 0) return;
 
+            bool releasePending = false;
+            int releaseBarIdx = -1;
+
             // --- Identify whether a bar-close event occurred on this update. ---
             bool processClosedBar = false;
             DateTime closedBarTime = DateTime.MinValue;
@@ -132,6 +135,12 @@ namespace NinjaTrader.NinjaScript.Indicators
                     RemoveDrawObject(TrackingLowerTag);
                 }
 
+                if (phase == Phase.Anchored && curTod >= ReleaseCloseTime)
+                {
+                    releasePending = true;
+                    releaseBarIdx = closedBarIdx;
+                }
+
                 lastProcessedBarEt = etClose;
             }
 
@@ -139,7 +148,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             if (phase == Phase.Anchored && anchorPrice.HasValue && anchorBarIndex >= 0 && anchorDayKey != null)
             {
                 int startBarsAgo = CurrentBar - anchorBarIndex;
-                int endBarsAgo = 0;
+                int endBarsAgo = releasePending ? (CurrentBar - releaseBarIdx) : 0;
 
                 double upperA = anchorPrice.Value + Offset;
                 double lowerA = anchorPrice.Value - Offset;
@@ -172,6 +181,14 @@ namespace NinjaTrader.NinjaScript.Indicators
                           0, lower,
                           -LineExtensionBars, lower,
                           LowerLineBrush, LineDashStyle, LineWidth);
+            }
+
+            if (releasePending)
+            {
+                phase = Phase.Tracking;
+                anchorPrice = null;
+                anchorBarIndex = -1;
+                anchorDayKey = null;
             }
         }
 
