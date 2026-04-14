@@ -19,6 +19,16 @@ namespace NinjaTrader.NinjaScript.Indicators
         private const string TrackingUpperTag = "TrackingUpper";
         private const string TrackingLowerTag = "TrackingLower";
 
+        private enum Phase { Tracking, Anchored }
+
+        private Phase phase;
+        private double? anchorPrice;
+        private int anchorBarIndex;
+        private string anchorDayKey;
+        private DateTime lastTradingDay;
+        private DateTime lastProcessedBarEt;
+        private TimeZoneInfo easternTz;
+
         protected override void OnStateChange()
         {
             if (State == State.SetDefaults)
@@ -40,6 +50,24 @@ namespace NinjaTrader.NinjaScript.Indicators
                 LineExtensionBars = 5;
                 AnchorCloseTime = new TimeSpan(9, 30, 0);
                 ReleaseCloseTime = new TimeSpan(9, 35, 0);
+            }
+            else if (State == State.Configure)
+            {
+                try
+                {
+                    easternTz = TimeZoneInfo.FindSystemTimeZoneById("Eastern Standard Time");
+                }
+                catch
+                {
+                    easternTz = TimeZoneInfo.FindSystemTimeZoneById("America/New_York");
+                }
+
+                phase = Phase.Tracking;
+                anchorPrice = null;
+                anchorBarIndex = -1;
+                anchorDayKey = null;
+                lastTradingDay = DateTime.MinValue;
+                lastProcessedBarEt = DateTime.MinValue;
             }
         }
 
