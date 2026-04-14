@@ -45,34 +45,38 @@ The indicator is always in one of two modes.
 ### 3.1 Tracking Mode
 
 - The reference price is the current (most recent) bar's close.
-- The upper line is drawn at `reference + Offset`; the lower line at `reference - Offset`.
-- The lines start at the current bar's time and extend `LineExtensionBars` bars into the future.
-- As price moves, the lines reposition on every price change (`Calculate.OnPriceChange`).
+- Two "tracking lines" are drawn — upper at `reference + Offset`, lower at `reference - Offset`.
+- The tracking lines start at the current bar's time and extend `LineExtensionBars` bars into the future.
+- As price moves, the tracking lines reposition on every price change (`Calculate.OnPriceChange`).
 - This is the default mode at startup and after the daily reset.
+- Tracking lines use fixed drawing-object tags (`"TrackingUpper"`, `"TrackingLower"`). Each redraw replaces the previous pair, so tracking lines never accumulate.
 
 ### 3.2 Anchored Mode
 
 - The reference price is a fixed number called `anchorPrice`, captured once at the start of the phase.
-- The upper line is drawn at `anchorPrice + Offset`; the lower line at `anchorPrice - Offset`.
-- Both lines are drawn as a fixed horizontal segment spanning from the anchor bar (close at 09:30:00 ET) through the release bar (close at 09:35:00 ET).
-- Price changes **do not** affect the lines during this phase.
+- Two "anchored lines" are drawn — upper at `anchorPrice + Offset`, lower at `anchorPrice - Offset`.
+- The anchored lines form a fixed horizontal segment spanning from the anchor bar (first bar whose close is at-or-past `AnchorCloseTime` that day) through the release bar (first bar whose close is at-or-past `ReleaseCloseTime` that day).
+- Price changes **do not** affect the anchored lines during this phase.
+- **Live tracking lines are hidden during this phase** — the tracking-line tags are removed on entry to anchored mode so only the frozen anchored segment is visible between 09:30 and 09:35.
+- **Anchored segments persist after release.** Anchored lines use day-keyed drawing tags (e.g., `"AnchorUpper_20260414"`, `"AnchorLower_20260414"`) so the segment stays on the chart as a historical marker all day, and across multiple days on a multi-day chart. Each trading day gets its own pair of anchored-line tags.
 
 ### 3.3 Phase Transitions
 
 Transitions are evaluated **on bar close only**, never mid-bar:
 
-1. **Tracking → Anchored:** triggered when a bar closes whose timestamp in Eastern Time equals `AnchorCloseTime` (default `09:30:00`). The indicator captures that bar's close price as `anchorPrice` and flips into Anchored mode.
+1. **Tracking → Anchored:** the indicator remembers the previous closed bar's Eastern time-of-day. When a new closed bar has an ET close at-or-past `AnchorCloseTime` **and** the previous closed bar today had an ET close strictly before `AnchorCloseTime`, this is the anchor bar. The indicator captures that bar's close price as `anchorPrice`, records its bar index, and flips into Anchored mode. The transition happens **before drawing** so the anchor bar itself renders as part of the anchored segment.
 
-2. **Anchored → Tracking:** triggered when a bar closes whose timestamp in Eastern Time equals `ReleaseCloseTime` (default `09:35:00`). The indicator clears `anchorPrice` and flips into Tracking mode. The release bar itself is still drawn as the last anchored bar — the *next* bar is the first new tracking bar.
+2. **Anchored → Tracking:** the indicator flags "release pending" when a closed bar's ET close is at-or-past `ReleaseCloseTime`. The transition happens **after drawing** so the release bar still renders as the final bar of the anchored segment. The next bar processed will be in Tracking mode.
 
-3. **Daily reset:** at the start of each new Eastern Time trading day, the indicator resets: `phase = Tracking`, `anchorPrice = null`.
+3. **Daily reset:** at the start of each new Eastern Time trading day, the indicator resets: `phase = Tracking`, `anchorPrice = null`, and the "previous closed bar today" memory is cleared. The day's anchored segment (if any) remains visible via its day-keyed drawing tags.
 
-### 3.4 Odd-Timeframe Fallback
+### 3.4 Mid-Day Chart Load Safeguard
 
-Most timeframes (1s, 5s, 10s, 15s, 30s, 1m, 5m) have a bar that closes exactly at 09:30:00 and another at 09:35:00. On oddball timeframes (e.g., 3-minute), there may be no exact match. In that case:
+If the chart's first processed bar for a given day has an ET close already past `AnchorCloseTime`, the anchor trigger will not fire for that day — because the "previous bar today was before `AnchorCloseTime`" condition cannot be satisfied. The indicator stays in Tracking mode for the rest of the day. No anchored segment is retroactively invented. This is the intended behavior when a chart's loaded history does not include the morning open.
 
-- Anchor fires on the **first bar whose close time is strictly past 09:30:00** that day.
-- Release fires on the **first bar whose close time is strictly past 09:35:00** that day.
+### 3.5 Odd-Timeframe Fallback
+
+Most timeframes (1s, 5s, 10s, 15s, 30s, 1m, 5m) have a bar that closes exactly at 09:30:00 and another at 09:35:00. On oddball timeframes (e.g., 3-minute), there may be no exact match. The previous-bar-crossing rule in §3.3 handles these naturally: the anchor fires on whichever bar crosses the threshold, whether that's exactly at 09:30:00 or at 09:31:00 on a 3-minute chart. Same for release.
 
 ---
 
@@ -117,12 +121,15 @@ namespace NinjaTrader.NinjaScript.Indicators
         private enum Phase { Tracking, Anchored }
         private Phase phase;
         private double? anchorPrice;
+        private int anchorBarIndex;           // bar number where anchor was captured
+        private string anchorDayKey;          // "yyyyMMdd" for the current day's anchor segment tags
         private DateTime lastTradingDay;
-        private int anchorBarIndex;       // bar number where anchor was captured
-        private TimeZoneInfo easternTz;   // cached
+        private DateTime lastProcessedBarEt;  // ET close of most recent bar evaluated today
+        private TimeZoneInfo easternTz;       // cached
 
-        private const string UpperTag = "UpperOffsetLine";
-        private const string LowerTag = "LowerOffsetLine";
+        private const string TrackingUpperTag = "TrackingUpper";
+        private const string TrackingLowerTag = "TrackingLower";
+        // Anchored segment tags are built dynamically: "AnchorUpper_" + yyyyMMdd, "AnchorLower_" + yyyyMMdd
 
         // === Lifecycle ===
         protected override void OnStateChange() { /* SetDefaults, Configure */ }
@@ -150,10 +157,21 @@ No helper classes, no inheritance beyond `Indicator`, no external dependencies.
 
 ### 5.5 Drawing
 
-- Use `Draw.Line(this, tag, ...)` for both lines.
-- Always use the same two tags (`"UpperOffsetLine"`, `"LowerOffsetLine"`). NT8's `Draw.Line` replaces any existing object with the same tag, so redraws do not accumulate objects.
-- **Tracking draw:** start at `CurrentBar`, end at `CurrentBar + LineExtensionBars`, prices `Close[0] ± Offset`.
-- **Anchored draw:** start at `anchorBarIndex`, end at `CurrentBar` (the newest bar processed so far, which is always between the anchor bar and the release bar inclusive), prices `anchorPrice ± Offset`. Each new bar during the anchor phase redraws the same two tags with an end point one bar further right; the final redraw on the release-bar close leaves the segment pinned at the release bar.
+Two independent tag families:
+
+**Tracking lines** — `"TrackingUpper"`, `"TrackingLower"`, fixed tags, one pair total.
+- Drawn on every `OnBarUpdate` call while `phase == Tracking`.
+- Start at `0` bars ago (current bar), end at `-LineExtensionBars` bars ago (future), prices `Close[0] ± Offset`.
+- Each redraw replaces the previous pair via same-tag replacement, so tracking lines never accumulate.
+- On entry to Anchored phase, both tags are removed via `RemoveDrawObject` so no stale tracking lines linger during the anchor window.
+
+**Anchored segments** — `"AnchorUpper_" + yyyyMMdd`, `"AnchorLower_" + yyyyMMdd`, one pair per trading day.
+- Drawn on every `OnBarUpdate` call while `phase == Anchored`.
+- Start at `anchorBarIndex` (the bar whose close set the anchor price), end at the current bar being processed while the anchor window is still open, or at the release bar index on the release update.
+- Prices `anchorPrice ± Offset`.
+- Because the tag includes the day key, these segments persist across day boundaries — a week-long 1-min chart will show a separate anchored bracket for each day.
+- Each bar within the anchor window replaces the same day's tags with a slightly longer segment, so the segment grows from the anchor bar forward to the release bar.
+- After release, the tags are no longer redrawn and the segment remains frozen until the chart is closed or the indicator is reloaded.
 
 ### 5.6 Historical vs Live
 
@@ -163,23 +181,25 @@ Same `OnBarUpdate` runs in both `State.Historical` and `State.Realtime`. Phase t
 
 ## 6. Edge Cases
 
-1. **Chart opened mid-day (after 09:35):** Historical replay walks through the day, captures the anchor on the 09:30 bar, draws the anchored segment, releases at 09:35, and arrives at the current moment in Tracking mode. The anchored segment is visible at its correct place.
+1. **Chart opened mid-day (after 09:35) with morning history included:** Historical replay walks through the day, captures the anchor on the 09:30 bar, draws the anchored segment with the day-keyed tags, releases at 09:35, and arrives at the current moment in Tracking mode. The anchored segment remains visible at its correct place because day-keyed tags are not reused.
 
-2. **Chart opened before 09:30:** Tracking mode only. Nothing special happens until the 09:30 bar closes.
+2. **Chart opened mid-day (after 09:30) with no morning history:** The first processed bar's ET close is already past `AnchorCloseTime`, so the crossing check in §3.3 never satisfies. The indicator stays in Tracking mode all day; no retroactive anchored segment appears.
 
-3. **Weekend / market closed:** No data, no updates. Indicator sits in whatever mode it was in.
+3. **Chart opened before 09:30:** Tracking mode only. Nothing special happens until the 09:30 bar closes.
 
-4. **Multi-day chart:** The daily reset fires once per Eastern Time trading day, so each day has its own anchor/release segment visible on the chart.
+4. **Weekend / market closed:** No data, no updates. Indicator sits in whatever mode it was in.
 
-5. **Chart timezone is not Eastern:** Doesn't matter. Every bar's timestamp is converted to Eastern Time before comparing to `AnchorCloseTime` / `ReleaseCloseTime`.
+5. **Multi-day chart:** The daily reset fires once per Eastern Time trading day. Each day's anchored segment uses a different day-keyed tag pair, so all prior days' brackets remain visible alongside the current day's live tracking lines.
 
-6. **Odd timeframe (3-min, 7-min, etc.):** Fallback rule applies — first bar whose close is strictly past the target time.
+6. **Chart timezone is not Eastern:** Doesn't matter. Every bar's timestamp is converted to Eastern Time before comparing to `AnchorCloseTime` / `ReleaseCloseTime`.
 
-7. **Daylight saving transitions:** Handled by `TimeZoneInfo.FindSystemTimeZoneById("Eastern Standard Time")`, which covers both EST and EDT automatically.
+7. **Odd timeframe (3-min, 7-min, etc.):** The previous-bar-crossing rule handles this — the anchor fires on whichever bar first crosses the threshold, whether exactly at 09:30:00 or at 09:31:00 on a 3-minute chart.
 
-8. **Settings changed mid-session:** NT8 recalculates the indicator from scratch on OK. Lines redraw at the new settings without extra code.
+8. **Daylight saving transitions:** Handled by `TimeZoneInfo.FindSystemTimeZoneById("Eastern Standard Time")`, which covers both EST and EDT automatically.
 
-9. **Historical vs live handoff:** Single code path; no branching on `State`.
+9. **Settings changed mid-session:** NT8 recalculates the indicator from scratch on OK. Lines redraw at the new settings without extra code.
+
+10. **Historical vs live handoff:** `OnBarUpdate` uses a small branch: in `State.Historical` it processes every bar as a closed bar; in `State.Realtime` it processes closed-bar events only on `IsFirstTickOfBar` (looking at `Time[1]` / `Close[1]`). Drawing runs unconditionally on every update so live tracking lines follow price in realtime.
 
 ---
 
