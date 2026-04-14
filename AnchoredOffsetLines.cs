@@ -26,14 +26,13 @@ namespace NinjaTrader.NinjaScript.Indicators
         private int anchorBarIndex;
         private string anchorDayKey;
         private DateTime lastTradingDay;
-        private DateTime lastProcessedBarEt;
-        private TimeZoneInfo easternTz;
+        private DateTime lastProcessedBar;
 
         protected override void OnStateChange()
         {
             if (State == State.SetDefaults)
             {
-                Description = "Draws two lines offset above and below a reference price. Before 09:30 and after 09:35 ET the reference is the current bar's close. Between 09:30 and 09:35 ET the reference is locked to the close of the 09:29:59 bar and the segment persists as a daily bracket.";
+                Description = "Draws two offset lines that track current price, then lock to the close of the bar just before Anchor Close Time and stay locked until Release Close Time. Anchor/Release times are compared against the chart's display timezone — set your chart to Eastern Time for the default 09:30-09:35 ET window. A midline at the anchor price can be shown during the locked window.";
                 Name = "AnchoredOffsetLines";
                 Calculate = Calculate.OnPriceChange;
                 IsOverlay = true;
@@ -58,21 +57,12 @@ namespace NinjaTrader.NinjaScript.Indicators
             }
             else if (State == State.Configure)
             {
-                try
-                {
-                    easternTz = TimeZoneInfo.FindSystemTimeZoneById("Eastern Standard Time");
-                }
-                catch
-                {
-                    easternTz = TimeZoneInfo.FindSystemTimeZoneById("America/New_York");
-                }
-
                 phase = Phase.Tracking;
                 anchorPrice = null;
                 anchorBarIndex = -1;
                 anchorDayKey = null;
                 lastTradingDay = DateTime.MinValue;
-                lastProcessedBarEt = DateTime.MinValue;
+                lastProcessedBar = DateTime.MinValue;
             }
         }
 
@@ -104,32 +94,28 @@ namespace NinjaTrader.NinjaScript.Indicators
                 closedBarIdx = CurrentBar - 1;
             }
 
-            // --- Per-day reset runs on every closed bar. Phase transitions land here in Tasks 5 & 6. ---
+            // --- Per-day reset + phase transitions on closed bars. ---
+            // closedBarTime is in the chart's display timezone (which NT8 sets from the user's
+            // profile). AnchorCloseTime / ReleaseCloseTime are compared directly against it — no
+            // timezone conversion. Set your chart to Eastern Time for 09:30 ET anchor behavior.
             if (processClosedBar)
             {
-                // Bars.TradingHours.TimeZoneInfo is the exchange timezone the bar times are expressed in
-                // (e.g., America/Chicago for CME futures). We must convert explicitly from that zone to
-                // Eastern — using ConvertTime(dt, destZone) alone would treat dt as system-local, which is wrong.
-                TimeZoneInfo sourceTz = Bars.TradingHours.TimeZoneInfo;
-                DateTime rawBarTime = DateTime.SpecifyKind(closedBarTime, DateTimeKind.Unspecified);
-                DateTime etClose = TimeZoneInfo.ConvertTime(rawBarTime, sourceTz, easternTz);
-
-                if (etClose.Date != lastTradingDay)
+                if (closedBarTime.Date != lastTradingDay)
                 {
-                    lastTradingDay = etClose.Date;
+                    lastTradingDay = closedBarTime.Date;
                     phase = Phase.Tracking;
                     anchorPrice = null;
                     anchorBarIndex = -1;
                     anchorDayKey = null;
-                    lastProcessedBarEt = DateTime.MinValue;
+                    lastProcessedBar = DateTime.MinValue;
                 }
 
                 bool havePrevToday =
-                    lastProcessedBarEt != DateTime.MinValue &&
-                    lastProcessedBarEt.Date == etClose.Date;
+                    lastProcessedBar != DateTime.MinValue &&
+                    lastProcessedBar.Date == closedBarTime.Date;
 
-                TimeSpan prevTod = havePrevToday ? lastProcessedBarEt.TimeOfDay : TimeSpan.MinValue;
-                TimeSpan curTod = etClose.TimeOfDay;
+                TimeSpan prevTod = havePrevToday ? lastProcessedBar.TimeOfDay : TimeSpan.MinValue;
+                TimeSpan curTod = closedBarTime.TimeOfDay;
 
                 if (phase == Phase.Tracking
                     && havePrevToday
@@ -138,7 +124,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 {
                     anchorPrice = closedBarClose;
                     anchorBarIndex = closedBarIdx;
-                    anchorDayKey = etClose.ToString("yyyyMMdd");
+                    anchorDayKey = closedBarTime.ToString("yyyyMMdd");
                     phase = Phase.Anchored;
 
                     RemoveDrawObject(TrackingUpperTag);
@@ -151,7 +137,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                     releaseBarIdx = closedBarIdx;
                 }
 
-                lastProcessedBarEt = etClose;
+                lastProcessedBar = closedBarTime;
             }
 
             // --- Drawing. ---
@@ -255,11 +241,11 @@ namespace NinjaTrader.NinjaScript.Indicators
         public int LineExtensionBars { get; set; }
 
         [NinjaScriptProperty]
-        [Display(Name = "Anchor close time (ET)", GroupName = "Parameters", Order = 6)]
+        [Display(Name = "Anchor close time (chart tz)", GroupName = "Parameters", Order = 6)]
         public TimeSpan AnchorCloseTime { get; set; }
 
         [NinjaScriptProperty]
-        [Display(Name = "Release close time (ET)", GroupName = "Parameters", Order = 7)]
+        [Display(Name = "Release close time (chart tz)", GroupName = "Parameters", Order = 7)]
         public TimeSpan ReleaseCloseTime { get; set; }
 
         [NinjaScriptProperty]
