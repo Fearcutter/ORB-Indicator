@@ -50,6 +50,11 @@ namespace NinjaTrader.NinjaScript.Indicators
                 LineExtensionBars = 5;
                 AnchorCloseTime = new TimeSpan(9, 30, 0);
                 ReleaseCloseTime = new TimeSpan(9, 35, 0);
+
+                ShowMidLine = true;
+                MidLineBrush = Brushes.Gold;
+                MidLineWidth = 1;
+                MidLineDashStyle = DashStyleHelper.Dash;
             }
             else if (State == State.Configure)
             {
@@ -102,7 +107,12 @@ namespace NinjaTrader.NinjaScript.Indicators
             // --- Per-day reset runs on every closed bar. Phase transitions land here in Tasks 5 & 6. ---
             if (processClosedBar)
             {
-                DateTime etClose = TimeZoneInfo.ConvertTime(closedBarTime, easternTz);
+                // Bars.TradingHours.TimeZoneInfo is the exchange timezone the bar times are expressed in
+                // (e.g., America/Chicago for CME futures). We must convert explicitly from that zone to
+                // Eastern — using ConvertTime(dt, destZone) alone would treat dt as system-local, which is wrong.
+                TimeZoneInfo sourceTz = Bars.TradingHours.TimeZoneInfo;
+                DateTime rawBarTime = DateTime.SpecifyKind(closedBarTime, DateTimeKind.Unspecified);
+                DateTime etClose = TimeZoneInfo.ConvertTime(rawBarTime, sourceTz, easternTz);
 
                 if (etClose.Date != lastTradingDay)
                 {
@@ -152,9 +162,11 @@ namespace NinjaTrader.NinjaScript.Indicators
 
                 double upperA = anchorPrice.Value + Offset;
                 double lowerA = anchorPrice.Value - Offset;
+                double midA = anchorPrice.Value;
 
                 string upTag = "AnchorUpper_" + anchorDayKey;
                 string loTag = "AnchorLower_" + anchorDayKey;
+                string midTag = "AnchorMid_" + anchorDayKey;
 
                 Draw.Line(this, upTag, false,
                           startBarsAgo, upperA,
@@ -165,6 +177,14 @@ namespace NinjaTrader.NinjaScript.Indicators
                           startBarsAgo, lowerA,
                           endBarsAgo, lowerA,
                           LowerLineBrush, LineDashStyle, LineWidth);
+
+                if (ShowMidLine)
+                {
+                    Draw.Line(this, midTag, false,
+                              startBarsAgo, midA,
+                              endBarsAgo, midA,
+                              MidLineBrush, MidLineDashStyle, MidLineWidth);
+                }
             }
             else
             {
@@ -241,6 +261,30 @@ namespace NinjaTrader.NinjaScript.Indicators
         [NinjaScriptProperty]
         [Display(Name = "Release close time (ET)", GroupName = "Parameters", Order = 7)]
         public TimeSpan ReleaseCloseTime { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "Show midline (at anchor price)", GroupName = "Mid Line", Order = 8)]
+        public bool ShowMidLine { get; set; }
+
+        [XmlIgnore]
+        [Display(Name = "Midline color", GroupName = "Mid Line", Order = 9)]
+        public Brush MidLineBrush { get; set; }
+
+        [Browsable(false)]
+        public string MidLineBrushSerializable
+        {
+            get { return Serialize.BrushToString(MidLineBrush); }
+            set { MidLineBrush = Serialize.StringToBrush(value); }
+        }
+
+        [NinjaScriptProperty]
+        [Range(1, int.MaxValue)]
+        [Display(Name = "Midline width", GroupName = "Mid Line", Order = 10)]
+        public int MidLineWidth { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "Midline dash style", GroupName = "Mid Line", Order = 11)]
+        public DashStyleHelper MidLineDashStyle { get; set; }
         #endregion
     }
 }
