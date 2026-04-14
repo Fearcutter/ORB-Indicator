@@ -78,16 +78,22 @@ namespace NinjaTrader.NinjaScript.Indicators
             // --- Identify whether a bar-close event occurred on this update. ---
             bool processClosedBar = false;
             DateTime closedBarTime = DateTime.MinValue;
+            double closedBarClose = 0.0;
+            int closedBarIdx = -1;
 
             if (State == State.Historical)
             {
                 processClosedBar = true;
                 closedBarTime = Time[0];
+                closedBarClose = Close[0];
+                closedBarIdx = CurrentBar;
             }
             else if (State == State.Realtime && IsFirstTickOfBar && CurrentBar >= 1)
             {
                 processClosedBar = true;
                 closedBarTime = Time[1];
+                closedBarClose = Close[1];
+                closedBarIdx = CurrentBar - 1;
             }
 
             // --- Per-day reset runs on every closed bar. Phase transitions land here in Tasks 5 & 6. ---
@@ -105,23 +111,68 @@ namespace NinjaTrader.NinjaScript.Indicators
                     lastProcessedBarEt = DateTime.MinValue;
                 }
 
+                bool havePrevToday =
+                    lastProcessedBarEt != DateTime.MinValue &&
+                    lastProcessedBarEt.Date == etClose.Date;
+
+                TimeSpan prevTod = havePrevToday ? lastProcessedBarEt.TimeOfDay : TimeSpan.MinValue;
+                TimeSpan curTod = etClose.TimeOfDay;
+
+                if (phase == Phase.Tracking
+                    && havePrevToday
+                    && prevTod < AnchorCloseTime
+                    && curTod >= AnchorCloseTime)
+                {
+                    anchorPrice = closedBarClose;
+                    anchorBarIndex = closedBarIdx;
+                    anchorDayKey = etClose.ToString("yyyyMMdd");
+                    phase = Phase.Anchored;
+
+                    RemoveDrawObject(TrackingUpperTag);
+                    RemoveDrawObject(TrackingLowerTag);
+                }
+
                 lastProcessedBarEt = etClose;
             }
 
-            // --- Drawing (phase-specific logic added in later tasks). ---
-            double refPrice = Close[0];
-            double upper = refPrice + Offset;
-            double lower = refPrice - Offset;
+            // --- Drawing. ---
+            if (phase == Phase.Anchored && anchorPrice.HasValue && anchorBarIndex >= 0 && anchorDayKey != null)
+            {
+                int startBarsAgo = CurrentBar - anchorBarIndex;
+                int endBarsAgo = 0;
 
-            Draw.Line(this, TrackingUpperTag, false,
-                      0, upper,
-                      -LineExtensionBars, upper,
-                      UpperLineBrush, LineDashStyle, LineWidth);
+                double upperA = anchorPrice.Value + Offset;
+                double lowerA = anchorPrice.Value - Offset;
 
-            Draw.Line(this, TrackingLowerTag, false,
-                      0, lower,
-                      -LineExtensionBars, lower,
-                      LowerLineBrush, LineDashStyle, LineWidth);
+                string upTag = "AnchorUpper_" + anchorDayKey;
+                string loTag = "AnchorLower_" + anchorDayKey;
+
+                Draw.Line(this, upTag, false,
+                          startBarsAgo, upperA,
+                          endBarsAgo, upperA,
+                          UpperLineBrush, LineDashStyle, LineWidth);
+
+                Draw.Line(this, loTag, false,
+                          startBarsAgo, lowerA,
+                          endBarsAgo, lowerA,
+                          LowerLineBrush, LineDashStyle, LineWidth);
+            }
+            else
+            {
+                double refPrice = Close[0];
+                double upper = refPrice + Offset;
+                double lower = refPrice - Offset;
+
+                Draw.Line(this, TrackingUpperTag, false,
+                          0, upper,
+                          -LineExtensionBars, upper,
+                          UpperLineBrush, LineDashStyle, LineWidth);
+
+                Draw.Line(this, TrackingLowerTag, false,
+                          0, lower,
+                          -LineExtensionBars, lower,
+                          LowerLineBrush, LineDashStyle, LineWidth);
+            }
         }
 
         #region Properties
