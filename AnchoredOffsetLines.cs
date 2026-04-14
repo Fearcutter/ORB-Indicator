@@ -54,6 +54,12 @@ namespace NinjaTrader.NinjaScript.Indicators
                 MidLineBrush = Brushes.Gold;
                 MidLineWidth = 1;
                 MidLineDashStyle = DashStyleHelper.Dash;
+
+                ShowTakeProfitLines = true;
+                TakeProfitOffset = 12.5;
+                TakeProfitBrush = Brushes.LimeGreen;
+                TakeProfitLineWidth = 1;
+                TakeProfitDashStyle = DashStyleHelper.Dot;
             }
             else if (State == State.Configure)
             {
@@ -171,6 +177,25 @@ namespace NinjaTrader.NinjaScript.Indicators
                               endBarsAgo, midA,
                               MidLineBrush, MidLineDashStyle, MidLineWidth);
                 }
+
+                if (ShowTakeProfitLines)
+                {
+                    double tpUpper = upperA + TakeProfitOffset;
+                    double tpLower = lowerA - TakeProfitOffset;
+
+                    string tpUpTag = "AnchorTPUpper_" + anchorDayKey;
+                    string tpLoTag = "AnchorTPLower_" + anchorDayKey;
+
+                    Draw.Line(this, tpUpTag, false,
+                              startBarsAgo, tpUpper,
+                              endBarsAgo, tpUpper,
+                              TakeProfitBrush, TakeProfitDashStyle, TakeProfitLineWidth);
+
+                    Draw.Line(this, tpLoTag, false,
+                              startBarsAgo, tpLower,
+                              endBarsAgo, tpLower,
+                              TakeProfitBrush, TakeProfitDashStyle, TakeProfitLineWidth);
+                }
             }
             else
             {
@@ -271,6 +296,35 @@ namespace NinjaTrader.NinjaScript.Indicators
         [NinjaScriptProperty]
         [Display(Name = "Midline dash style", GroupName = "Mid Line", Order = 11)]
         public DashStyleHelper MidLineDashStyle { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "Show take-profit lines", GroupName = "Take Profit", Order = 12)]
+        public bool ShowTakeProfitLines { get; set; }
+
+        [NinjaScriptProperty]
+        [Range(0.0, double.MaxValue)]
+        [Display(Name = "Take-profit offset (points)", GroupName = "Take Profit", Order = 13)]
+        public double TakeProfitOffset { get; set; }
+
+        [XmlIgnore]
+        [Display(Name = "Take-profit color", GroupName = "Take Profit", Order = 14)]
+        public Brush TakeProfitBrush { get; set; }
+
+        [Browsable(false)]
+        public string TakeProfitBrushSerializable
+        {
+            get { return Serialize.BrushToString(TakeProfitBrush); }
+            set { TakeProfitBrush = Serialize.StringToBrush(value); }
+        }
+
+        [NinjaScriptProperty]
+        [Range(1, int.MaxValue)]
+        [Display(Name = "Take-profit line width", GroupName = "Take Profit", Order = 15)]
+        public int TakeProfitLineWidth { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "Take-profit dash style", GroupName = "Take Profit", Order = 16)]
+        public DashStyleHelper TakeProfitDashStyle { get; set; }
         #endregion
     }
 }
