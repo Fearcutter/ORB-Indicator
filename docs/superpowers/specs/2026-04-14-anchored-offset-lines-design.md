@@ -153,7 +153,7 @@ No helper classes, no inheritance beyond `Indicator`, no external dependencies.
 - Use `Draw.Line(this, tag, ...)` for both lines.
 - Always use the same two tags (`"UpperOffsetLine"`, `"LowerOffsetLine"`). NT8's `Draw.Line` replaces any existing object with the same tag, so redraws do not accumulate objects.
 - **Tracking draw:** start at `CurrentBar`, end at `CurrentBar + LineExtensionBars`, prices `Close[0] ± Offset`.
-- **Anchored draw:** start at `anchorBarIndex`, end at the release bar index (computed as `anchorBarIndex + (bars between 09:30 and 09:35 at this timeframe)`), prices `anchorPrice ± Offset`.
+- **Anchored draw:** start at `anchorBarIndex`, end at `CurrentBar` (the newest bar processed so far, which is always between the anchor bar and the release bar inclusive), prices `anchorPrice ± Offset`. Each new bar during the anchor phase redraws the same two tags with an end point one bar further right; the final redraw on the release-bar close leaves the segment pinned at the release bar.
 
 ### 5.6 Historical vs Live
 
